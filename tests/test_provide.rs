@@ -66,6 +66,17 @@ struct ErrorWithBacktrace {
     backtrace: std::backtrace::Backtrace,
 }
 
+#[derive(Error, Debug)]
+enum _MyError {
+    #[error("Failed to bind expression: {expr}: {error}")]
+    BindErrorRoot {
+        expr: String,
+        #[source]
+        #[backtrace]
+        error: std::io::Error,
+    },
+}
+
 #[test]
 fn test_struct_provide_with_field_access() {
     let error = CustomError {

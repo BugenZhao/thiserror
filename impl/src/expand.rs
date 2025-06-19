@@ -306,21 +306,27 @@ fn impl_enum(input: Enum) -> TokenStream {
             });
 
             // Generate field pattern for this variant
-            let field_pat = if variant.fields.is_empty() {
-                quote!()
-            } else {
-                let field_names: Vec<_> = variant.fields.iter().map(|field| {
+            let other_fields: Vec<_> = variant.fields.iter().filter(|field| {
+                    let mut ok = true;
+                    if let Some(backtrace) = variant.backtrace_field() {
+                        ok = ok && backtrace.member != field.member;
+                    }
+                    if let Some(source) = variant.source_field() {
+                        ok = ok && source.member != field.member;
+                    }
+                    ok
+                }).map(|field| {
                     match &field.member {
-                        MemberUnraw::Named(ident) => ident.to_local(),
-                        MemberUnraw::Unnamed(index) => format_ident!("_{}", index),
+                        MemberUnraw::Named(ident) => {
+                            let field_name = ident.to_local();
+                            quote!(#field_name)
+                        },
+                        MemberUnraw::Unnamed(index) => {
+                            let field_name = format_ident!("_{}", index);
+                            quote!(#index: #field_name)
+                        },
                     }
                 }).collect();
-
-                match &variant.fields[0].member {
-                    MemberUnraw::Named(_) => quote!({ #(#field_names),* }),
-                    MemberUnraw::Unnamed(_) => quote!((#(#field_names),*)),
-                }
-            };
 
             match (variant.backtrace_field(), variant.source_field()) {
                 (Some(backtrace_field), Some(source_field))
@@ -351,19 +357,19 @@ fn impl_enum(input: Enum) -> TokenStream {
                             #request.provide_ref::<::thiserror::__private::Backtrace>(backtrace);
                         }
                     };
-                    let pat = if variant.fields.len() <= 2 {
+
+                    let pat =
+
+
                         quote! {
                             #ty::#ident {
                                 #backtrace: backtrace,
                                 #source: #varsource,
+                                #(#other_fields ,)*
                                 ..
                             }
-                        }
-                    } else {
-                        quote! {
-                            #ty::#ident #field_pat
-                        }
-                    };
+                        };
+
                     quote! {
                         #pat => {
                             use ::thiserror::__private::ThiserrorProvide as _;
@@ -389,15 +395,16 @@ fn impl_enum(input: Enum) -> TokenStream {
                             #varsource.thiserror_provide(#request);
                         }
                     };
-                    let pat = if variant.fields.len() == 1 {
+                    let pat =
+                    // if variant.fields.len() == 1 {
                         quote! {
-                            #ty::#ident {#backtrace: #varsource}
-                        }
-                    } else {
-                        quote! {
-                            #ty::#ident #field_pat
-                        }
-                    };
+                            #ty::#ident {#backtrace: #varsource, #(#other_fields ,)* ..}
+                        };
+                    // } else {
+                        // quote! {
+                            // #ty::#ident, #(#other_fields ,)* ..
+                        // }
+                    // };
                     quote! {
                         #pat => {
                             use ::thiserror::__private::ThiserrorProvide as _;
@@ -419,15 +426,16 @@ fn impl_enum(input: Enum) -> TokenStream {
                             #request.provide_ref::<::thiserror::__private::Backtrace>(backtrace);
                         }
                     };
-                    let pat = if variant.fields.len() == 1 {
+                    let pat =
+                    // if variant.fields.len() == 1 {
                         quote! {
-                            #ty::#ident {#backtrace: backtrace}
-                        }
-                    } else {
-                        quote! {
-                            #ty::#ident #field_pat
-                        }
-                    };
+                            #ty::#ident {#backtrace: backtrace, #(#other_fields ,)* ..}
+                        };
+                    // } else {
+                        // quote! {
+                            // #ty::#ident, #(#other_fields ,)* ..
+                        // }
+                    // };
                     quote! {
                         #pat => {
                             #body
@@ -437,22 +445,26 @@ fn impl_enum(input: Enum) -> TokenStream {
                 }
                 (None, _) => {
                     if variant.has_provide() {
-                        let pat = if variant.fields.is_empty() {
-                            quote! { #ty::#ident }
-                        } else {
-                            quote! { #ty::#ident #field_pat }
-                        };
+                        let pat =
+                        // if variant.fields.is_empty() {
+                            quote! { #ty::#ident {#(#other_fields ,)* ..} }
+                        // } else {
+                        //     quote! { #ty::#ident #field_pat }
+                        // }
+                        ;
                         quote! {
                             #pat => {
                                 #(#custom_provides)*
                             }
                         }
                     } else {
-                        let pat = if variant.fields.is_empty() {
-                            quote! { #ty::#ident }
-                        } else {
-                            quote! { #ty::#ident {..} }
-                        };
+                        let pat =
+                        // if variant.fields.is_empty() {
+                            quote! { #ty::#ident {#(#other_fields ,)* ..} };
+                        // }
+                        //  else {
+                        //     quote! { #ty::#ident {..} }
+                        // };
                         quote! {
                             #pat => {}
                         }
