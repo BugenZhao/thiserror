@@ -102,6 +102,15 @@ impl Field<'_> {
                 "not expected here; the #[error(...)] attribute belongs on top of a struct or an enum variant",
             ));
         }
+
+        // Check for provide attributes on fields
+        if !self.attrs.provide.is_empty() {
+            return Err(Error::new_spanned(
+                self.attrs.provide[0].original,
+                "not expected here; the #[provide(...)] attribute belongs on top of a struct or an enum variant",
+            ));
+        }
+
         Ok(())
     }
 }
@@ -125,6 +134,7 @@ fn check_non_field_attrs(attrs: &Attrs) -> Result<()> {
             "not expected here; the #[backtrace] attribute belongs on a specific field",
         ));
     }
+    // provide attributes are allowed on structs and enum variants
     if attrs.transparent.is_some() {
         if let Some(display) = &attrs.display {
             return Err(Error::new_spanned(

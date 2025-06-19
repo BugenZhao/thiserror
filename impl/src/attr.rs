@@ -15,6 +15,7 @@ pub struct Attrs<'a> {
     pub from: Option<From<'a>>,
     pub transparent: Option<Transparent<'a>>,
     pub fmt: Option<Fmt<'a>>,
+    pub provide: Vec<Provide<'a>>,
 }
 
 #[derive(Clone)]
@@ -53,6 +54,13 @@ pub struct Fmt<'a> {
     pub path: ExprPath,
 }
 
+#[derive(Clone)]
+pub struct Provide<'a> {
+    pub original: &'a Attribute,
+    pub ty: TokenStream,
+    pub expr: TokenStream,
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
 pub enum Trait {
     Debug,
@@ -74,6 +82,7 @@ pub fn get(input: &[Attribute]) -> Result<Attrs> {
         from: None,
         transparent: None,
         fmt: None,
+        provide: Vec::new(),
     };
 
     for attr in input {
@@ -115,6 +124,9 @@ pub fn get(input: &[Attribute]) -> Result<Attrs> {
                 original: attr,
                 span,
             });
+        } else if attr.path().is_ident("provide") {
+            let provide = parse_provide_attribute(attr)?;
+            attrs.provide.push(provide);
         }
     }
 
@@ -190,6 +202,35 @@ fn parse_error_attribute<'a>(attrs: &mut Attrs<'a>, attr: &'a Attribute) -> Resu
         }
         attrs.display = Some(display);
         Ok(())
+    })
+}
+
+fn parse_provide_attribute<'a>(attr: &'a Attribute) -> Result<Provide<'a>> {
+    attr.parse_args_with(|input: ParseStream| {
+        // Parse tokens until we hit "=>"
+        let mut ty_tokens = Vec::new();
+        while !input.is_empty() && !input.peek(Token![=>]) {
+            let token: TokenTree = input.parse()?;
+            ty_tokens.push(token);
+        }
+
+        if ty_tokens.is_empty() {
+            return Err(Error::new(input.span(), "expected type before '=>'"));
+        }
+
+        let ty = TokenStream::from_iter(ty_tokens);
+
+        // Expect "=>" token (fat arrow)
+        input.parse::<Token![=>]>()?;
+
+        // Parse the expression part after "=>"
+        let expr = parse_token_expr(input, true)?;
+
+        Ok(Provide {
+            original: attr,
+            ty,
+            expr,
+        })
     })
 }
 
