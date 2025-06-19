@@ -1,4 +1,0 @@
-
-# Flags for all targets.
-[target.'cfg(all())']
-rustflags = ["--cfg", "error_generic_member_access"]
