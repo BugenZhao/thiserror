@@ -1,3 +1,5 @@
+#![feature(error_generic_member_access)]
+
 use thiserror::Error;
 
 #[derive(Error, Debug)]

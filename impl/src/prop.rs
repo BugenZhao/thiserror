@@ -1,4 +1,5 @@
 use crate::ast::{Enum, Field, Struct, Variant};
+use crate::attr::Provide;
 use crate::unraw::MemberUnraw;
 use proc_macro2::Span;
 use syn::Type;
@@ -19,6 +20,14 @@ impl Struct<'_> {
     pub(crate) fn distinct_backtrace_field(&self) -> Option<&Field> {
         let backtrace_field = self.backtrace_field()?;
         distinct_backtrace_field(backtrace_field, self.from_field())
+    }
+
+    pub(crate) fn has_provide(&self) -> bool {
+        !self.attrs.provide.is_empty()
+    }
+
+    pub(crate) fn provide_attrs(&self) -> &[Provide] {
+        &self.attrs.provide
     }
 }
 
@@ -48,6 +57,10 @@ impl Enum<'_> {
                 .iter()
                 .all(|variant| variant.attrs.transparent.is_some())
     }
+
+    pub(crate) fn has_provide(&self) -> bool {
+        !self.attrs.provide.is_empty() || self.variants.iter().any(|variant| variant.has_provide())
+    }
 }
 
 impl Variant<'_> {
@@ -66,6 +79,14 @@ impl Variant<'_> {
     pub(crate) fn distinct_backtrace_field(&self) -> Option<&Field> {
         let backtrace_field = self.backtrace_field()?;
         distinct_backtrace_field(backtrace_field, self.from_field())
+    }
+
+    pub(crate) fn has_provide(&self) -> bool {
+        !self.attrs.provide.is_empty()
+    }
+
+    pub(crate) fn provide_attrs(&self) -> &[Provide] {
+        &self.attrs.provide
     }
 }
 

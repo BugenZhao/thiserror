@@ -70,57 +70,81 @@ fn impl_struct(input: Struct) -> TokenStream {
         }
     });
 
-    let provide_method = input.backtrace_field().map(|backtrace_field| {
+    let provide_method = if input.backtrace_field().is_some() || input.has_provide() {
+        let backtrace_field = input.backtrace_field();
         let request = quote!(request);
-        let backtrace = &backtrace_field.member;
-        let body = if let Some(source_field) = input.source_field() {
-            let source = &source_field.member;
-            let source_provide = if type_is_option(source_field.ty) {
-                quote_spanned! {source.span()=>
-                    if let ::core::option::Option::Some(source) = &self.#source {
-                        source.thiserror_provide(#request);
+
+        // Generate custom provide calls
+        let custom_provides = input.provide_attrs().iter().map(|provide| {
+            let ty = &provide.ty;
+            let expr = &provide.expr;
+            quote! {
+                #request.provide_value::<#ty>(#expr);
+            }
+        });
+
+        let body = if let Some(backtrace_field) = backtrace_field {
+            let backtrace = &backtrace_field.member;
+            if let Some(source_field) = input.source_field() {
+                let source = &source_field.member;
+                let source_provide = if type_is_option(source_field.ty) {
+                    quote_spanned! {source.span()=>
+                        if let ::core::option::Option::Some(source) = &self.#source {
+                            source.thiserror_provide(#request);
+                        }
                     }
+                } else {
+                    quote_spanned! {source.span()=>
+                        self.#source.thiserror_provide(#request);
+                    }
+                };
+                let self_provide = if source == backtrace {
+                    None
+                } else if type_is_option(backtrace_field.ty) {
+                    Some(quote! {
+                        if let ::core::option::Option::Some(backtrace) = &self.#backtrace {
+                            #request.provide_ref::<::thiserror::__private::Backtrace>(backtrace);
+                        }
+                    })
+                } else {
+                    Some(quote! {
+                        #request.provide_ref::<::thiserror::__private::Backtrace>(&self.#backtrace);
+                    })
+                };
+                quote! {
+                    use ::thiserror::__private::ThiserrorProvide as _;
+                    #source_provide
+                    #self_provide
+                    #(#custom_provides)*
                 }
-            } else {
-                quote_spanned! {source.span()=>
-                    self.#source.thiserror_provide(#request);
-                }
-            };
-            let self_provide = if source == backtrace {
-                None
             } else if type_is_option(backtrace_field.ty) {
-                Some(quote! {
+                quote! {
                     if let ::core::option::Option::Some(backtrace) = &self.#backtrace {
                         #request.provide_ref::<::thiserror::__private::Backtrace>(backtrace);
                     }
-                })
+                    #(#custom_provides)*
+                }
             } else {
-                Some(quote! {
+                quote! {
                     #request.provide_ref::<::thiserror::__private::Backtrace>(&self.#backtrace);
-                })
-            };
-            quote! {
-                use ::thiserror::__private::ThiserrorProvide as _;
-                #source_provide
-                #self_provide
-            }
-        } else if type_is_option(backtrace_field.ty) {
-            quote! {
-                if let ::core::option::Option::Some(backtrace) = &self.#backtrace {
-                    #request.provide_ref::<::thiserror::__private::Backtrace>(backtrace);
+                    #(#custom_provides)*
                 }
             }
         } else {
+            // Only custom provides, no backtrace
             quote! {
-                #request.provide_ref::<::thiserror::__private::Backtrace>(&self.#backtrace);
+                #(#custom_provides)*
             }
         };
-        quote! {
+
+        Some(quote! {
             fn provide<'_request>(&'_request self, #request: &mut ::core::error::Request<'_request>) {
                 #body
             }
-        }
-    });
+        })
+    } else {
+        None
+    };
 
     let mut display_implied_bounds = Set::new();
     let display_body = if input.attrs.transparent.is_some() {
@@ -267,10 +291,37 @@ fn impl_enum(input: Enum) -> TokenStream {
         None
     };
 
-    let provide_method = if input.has_backtrace() {
+    let provide_method = if input.has_backtrace() || input.has_provide() {
         let request = quote!(request);
         let arms = input.variants.iter().map(|variant| {
             let ident = &variant.ident;
+
+            // Generate custom provide calls for this variant
+            let custom_provides = variant.provide_attrs().iter().map(|provide| {
+                let ty_tokens = &provide.ty;
+                let expr = &provide.expr;
+                quote! {
+                    #request.provide_value::<#ty_tokens>(#expr);
+                }
+            });
+
+            // Generate field pattern for this variant
+            let field_pat = if variant.fields.is_empty() {
+                quote!()
+            } else {
+                let field_names: Vec<_> = variant.fields.iter().map(|field| {
+                    match &field.member {
+                        MemberUnraw::Named(ident) => ident.to_local(),
+                        MemberUnraw::Unnamed(index) => format_ident!("_{}", index),
+                    }
+                }).collect();
+
+                match &variant.fields[0].member {
+                    MemberUnraw::Named(_) => quote!({ #(#field_names),* }),
+                    MemberUnraw::Unnamed(_) => quote!((#(#field_names),*)),
+                }
+            };
+
             match (variant.backtrace_field(), variant.source_field()) {
                 (Some(backtrace_field), Some(source_field))
                     if backtrace_field.attrs.backtrace.is_none() =>
@@ -300,15 +351,25 @@ fn impl_enum(input: Enum) -> TokenStream {
                             #request.provide_ref::<::thiserror::__private::Backtrace>(backtrace);
                         }
                     };
+                    let pat = if variant.fields.len() <= 2 {
+                        quote! {
+                            #ty::#ident {
+                                #backtrace: backtrace,
+                                #source: #varsource,
+                                ..
+                            }
+                        }
+                    } else {
+                        quote! {
+                            #ty::#ident #field_pat
+                        }
+                    };
                     quote! {
-                        #ty::#ident {
-                            #backtrace: backtrace,
-                            #source: #varsource,
-                            ..
-                        } => {
+                        #pat => {
                             use ::thiserror::__private::ThiserrorProvide as _;
                             #source_provide
                             #self_provide
+                            #(#custom_provides)*
                         }
                     }
                 }
@@ -328,10 +389,20 @@ fn impl_enum(input: Enum) -> TokenStream {
                             #varsource.thiserror_provide(#request);
                         }
                     };
+                    let pat = if variant.fields.len() == 1 {
+                        quote! {
+                            #ty::#ident {#backtrace: #varsource}
+                        }
+                    } else {
+                        quote! {
+                            #ty::#ident #field_pat
+                        }
+                    };
                     quote! {
-                        #ty::#ident {#backtrace: #varsource, ..} => {
+                        #pat => {
                             use ::thiserror::__private::ThiserrorProvide as _;
                             #source_provide
+                            #(#custom_provides)*
                         }
                     }
                 }
@@ -348,14 +419,44 @@ fn impl_enum(input: Enum) -> TokenStream {
                             #request.provide_ref::<::thiserror::__private::Backtrace>(backtrace);
                         }
                     };
+                    let pat = if variant.fields.len() == 1 {
+                        quote! {
+                            #ty::#ident {#backtrace: backtrace}
+                        }
+                    } else {
+                        quote! {
+                            #ty::#ident #field_pat
+                        }
+                    };
                     quote! {
-                        #ty::#ident {#backtrace: backtrace, ..} => {
+                        #pat => {
                             #body
+                            #(#custom_provides)*
                         }
                     }
                 }
-                (None, _) => quote! {
-                    #ty::#ident {..} => {}
+                (None, _) => {
+                    if variant.has_provide() {
+                        let pat = if variant.fields.is_empty() {
+                            quote! { #ty::#ident }
+                        } else {
+                            quote! { #ty::#ident #field_pat }
+                        };
+                        quote! {
+                            #pat => {
+                                #(#custom_provides)*
+                            }
+                        }
+                    } else {
+                        let pat = if variant.fields.is_empty() {
+                            quote! { #ty::#ident }
+                        } else {
+                            quote! { #ty::#ident {..} }
+                        };
+                        quote! {
+                            #pat => {}
+                        }
+                    }
                 },
             }
         });
